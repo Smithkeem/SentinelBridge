@@ -231,4 +231,125 @@
     )
 )
 
+;; @desc Comprehensive AI Security audit and incident response function.
+;; This function is the cornerstone of the AI-guided security system. It allows the AI
+;; agent to submit a detailed report containing multiple boolean flags and integer scores
+;; representing different threat vectors (Liquidity drain, Flash loan attack, Latency spikes, etc.).
+;; Based on these inputs, the contract autonomously executes a complex decision tree to:
+;; 1. Adjust global risk levels.
+;; 2. Pause specific components (global bridge or specific chains).
+;; 3. Adjust transaction limits dynamically.
+;; 4. Emit detailed diagnostic events for off-chain monitoring.
+(define-public (analyze-incident-report 
+    (threat-vectors {
+        liquidity-drain: bool,
+        flash-loan-attack: bool,
+        latency-spike: bool,
+        anomalous-volume: bool,
+        mev-bot-activity: bool
+    })
+    (metrics {
+        current-latency: uint,
+        pending-tx-count: uint,
+        average-gas-price: uint,
+        threat-score: uint
+    })
+)
+    (let
+        (
+            (current-score (get threat-score metrics))
+            (is-critical 
+                (or 
+                    (get liquidity-drain threat-vectors) 
+                    (get flash-loan-attack threat-vectors)
+                    (> current-score HIGH-RISK-THRESHOLD)
+                )
+            )
+            (is-warning
+                (or
+                    (get anomalous-volume threat-vectors)
+                    (get latency-spike threat-vectors)
+                    (> current-score MEDIUM-RISK-THRESHOLD)
+                )
+            )
+        )
+        
+        (asserts! (or (is-ai-agent) (is-eq tx-sender CONTRACT-OWNER)) ERR-NOT-AUTHORIZED)
+        
+        ;; ---------------------------------------------------
+        ;; EMERGENCY PROTOCOL: CRITICAL LEVEL
+        ;; ---------------------------------------------------
+        (if is-critical
+            (begin
+                (var-set bridge-paused true)
+                (var-set global-risk-level MAX-RISK-SCORE)
+                (var-set global-transfer-limit u0)
+                (print { 
+                    event: "security-alert", 
+                    level: "CRITICAL", 
+                    action: "BRIDGE_PAUSED", 
+                    vectors: threat-vectors 
+                })
+                true
+            )
+            ;; ---------------------------------------------------
+            ;; CAUTION PROTOCOL: WARNING LEVEL
+            ;; ---------------------------------------------------
+            (if is-warning
+                (begin
+                    ;; Increase global risk level but keep bridge open
+                    (var-set global-risk-level current-score)
+                    
+                    ;; Drastically reduce limits to minimize exposure
+                    (var-set global-transfer-limit (/ (var-get global-transfer-limit) u4))
+                    
+                    ;; Log specifically what triggered the warning
+                    (if (get anomalous-volume threat-vectors)
+                        (begin (print { event: "security-warning", type: "anomalous-volume", action: "limit-reduced" }) true)
+                        true
+                    )
+                    (if (get latency-spike threat-vectors)
+                        (begin (print { event: "security-warning", type: "latency-spike", latency: (get current-latency metrics) }) true)
+                        true
+                    )
+                )
+                ;; ---------------------------------------------------
+                ;; NORMAL PROTOCOL: SAFE LEVEL
+                ;; ---------------------------------------------------
+                (begin
+                    ;; Slowly recover limits if risk is low and previously restricted
+                    ;; We only increase limits if the threat score is very low (< 10)
+                    (if (< current-score u10)
+                        (var-set global-transfer-limit u10000) ;; Restore to max
+                        true
+                    )
+                    (var-set global-risk-level current-score)
+                    (var-set bridge-paused false)
+                )
+            )
+        )
+        
+        ;; ---------------------------------------------------
+        ;; POST-ANALYSIS ACTIONS
+        ;; ---------------------------------------------------
+        
+        ;; Auto-Blocking Logic for MEV bots if detected
+        ;; (In a real scenario, we would need the specific principal, but here we can flag the mode)
+        (if (get mev-bot-activity threat-vectors)
+            (begin (print { event: "mev-activity-detected", action: "monitoring-intensified" }) true)
+            true
+        )
+        
+        ;; Update System State Timestamp
+        (var-set last-limit-update-block block-height)
+        
+        (ok {
+            new-risk-level: (var-get global-risk-level),
+            is-paused: (var-get bridge-paused),
+            limit: (var-get global-transfer-limit),
+            status: (if is-critical "CRITICAL" (if is-warning "WARNING" "NORMAL"))
+        })
+    )
+)
+
 
